@@ -4,3 +4,7 @@ openai
 python-dotenv
 pydantic-settings
 python-multipart
+sqlalchemy
+psycopg2-binary
+python-jose[cryptography]
+bcrypt

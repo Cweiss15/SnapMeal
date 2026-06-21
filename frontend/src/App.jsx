@@ -1,15 +1,44 @@
 import { useState, useCallback } from "react";
+import ChatPanel from "./ChatPanel";
+import AuthPage from "./AuthPage";
+import PreferencesPanel from "./PreferencesPanel";
+import FavoritesPanel from "./FavoritesPanel";
+import { apiFetch, getToken, clearToken } from "./api";
 import "./App.css";
 
-const API_URL = "http://localhost:8000";
-
 function App() {
+  const [authed, setAuthed] = useState(!!getToken());
   const [files, setFiles] = useState([]);
   const [previews, setPreviews] = useState([]);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
   const [error, setError] = useState(null);
   const [dragActive, setDragActive] = useState(false);
+  const [showPrefs, setShowPrefs] = useState(false);
+  const [showFavs, setShowFavs] = useState(false);
+  const [newIngredient, setNewIngredient] = useState("");
+
+  const logout = () => {
+    clearToken();
+    setAuthed(false);
+  };
+
+  const saveFavorite = async (recipe) => {
+    try {
+      const res = await apiFetch("/favorites/", {
+        method: "POST",
+        body: JSON.stringify({
+          name: recipe.name,
+          ingredients: recipe.ingredients,
+          instructions: recipe.instructions,
+        }),
+      });
+      if (res.ok) {
+        alert("Recipe saved to favorites!");
+      }
+    } catch {}
+  };
 
   const handleFiles = useCallback((incoming) => {
     const valid = Array.from(incoming).filter((f) =>
@@ -40,6 +69,53 @@ function App() {
     });
   };
 
+  const removeIngredient = (index) => {
+    setResult((prev) => ({
+      ...prev,
+      ingredients: prev.ingredients.filter((_, i) => i !== index),
+    }));
+  };
+
+  const addIngredient = (e) => {
+    e.preventDefault();
+    const name = newIngredient.trim();
+    if (!name) return;
+    setResult((prev) => ({
+      ...prev,
+      ingredients: [...prev.ingredients, { name }],
+    }));
+    setNewIngredient("");
+  };
+
+  const regenerateRecipes = async () => {
+    if (!result || !result.ingredients.length) return;
+    setRegenerating(true);
+    setError(null);
+
+    try {
+      const res = await apiFetch("/recipes", {
+        method: "POST",
+        body: JSON.stringify({
+          ingredients: result.ingredients.map((i) => i.name),
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail || `Server error ${res.status}`);
+      }
+      const data = await res.json();
+      setResult((prev) => ({
+        ...prev,
+        recipes: data.recipes,
+        shopping_list: data.shopping_list,
+      }));
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
   const analyze = async () => {
     if (!files.length) return;
     setLoading(true);
@@ -50,7 +126,7 @@ function App() {
     files.forEach((f) => formData.append("files", f));
 
     try {
-      const res = await fetch(`${API_URL}/analyze`, {
+      const res = await apiFetch("/analyze", {
         method: "POST",
         body: formData,
       });
@@ -73,12 +149,29 @@ function App() {
     setError(null);
   };
 
+  const handleRecipesUpdate = (updatedRecipes, updatedShoppingList) => {
+    setResult((prev) => ({
+      ...prev,
+      recipes: updatedRecipes,
+      shopping_list: updatedShoppingList ?? prev.shopping_list,
+    }));
+  };
+
+  if (!authed) {
+    return <AuthPage onAuth={() => setAuthed(true)} />;
+  }
+
   return (
     <div className="app">
       <header className="header">
         <div className="logo">🍳</div>
-        <h1>Fridge Recipe AI</h1>
-        <p className="subtitle">Snap your fridge, get recipes instantly</p>
+        <h1>SnapMeal</h1>
+        <p className="subtitle">Meal in a Snap</p>
+        <nav className="nav-bar">
+          <button className="nav-btn" onClick={() => setShowPrefs(true)}>🍽️ Preferences</button>
+          <button className="nav-btn" onClick={() => setShowFavs(true)}>❤️ Favorites</button>
+          <button className="nav-btn logout" onClick={logout}>Logout</button>
+        </nav>
       </header>
 
       {!result ? (
@@ -172,10 +265,45 @@ function App() {
               {result.ingredients.map((ing, i) => (
                 <span key={i} className="tag">
                   {ing.name}
+                  <button
+                    className="tag-remove"
+                    onClick={() => removeIngredient(i)}
+                    title="Remove ingredient"
+                  >
+                    ×
+                  </button>
                 </span>
               ))}
             </div>
+            <form className="add-ingredient-form" onSubmit={addIngredient}>
+              <input
+                type="text"
+                className="add-ingredient-input"
+                placeholder="Add ingredient..."
+                value={newIngredient}
+                onChange={(e) => setNewIngredient(e.target.value)}
+              />
+              <button type="submit" className="btn primary btn-sm">Add</button>
+            </form>
+            <button
+              className="btn primary regenerate-btn"
+              onClick={regenerateRecipes}
+              disabled={regenerating}
+            >
+              {regenerating ? <span className="spinner" /> : "🔄 Regenerate Recipes"}
+            </button>
           </section>
+
+          {regenerating && (
+            <div className="loading-overlay">
+              <div className="loading-card">
+                <span className="spinner large" />
+                <p>Regenerating recipes...</p>
+              </div>
+            </div>
+          )}
+
+          {error && <div className="error-banner">{error}</div>}
 
           <section className="recipes-grid">
             {result.recipes.map((recipe, i) => (
@@ -183,6 +311,7 @@ function App() {
                 <h3>
                   <span className="recipe-num">#{i + 1}</span> {recipe.name}
                 </h3>
+                <button className="fav-btn" onClick={() => saveFavorite(recipe)} title="Save to favorites">❤️</button>
                 <div className="recipe-ingredients">
                   <h4>Ingredients</h4>
                   <ul>
@@ -213,8 +342,25 @@ function App() {
               </ul>
             </section>
           )}
+
+          <ChatPanel
+            ingredients={result?.ingredients ?? []}
+            recipes={result?.recipes ?? []}
+            onRecipesUpdate={handleRecipesUpdate}
+          />
         </main>
       )}
+
+      {!result && (
+        <ChatPanel
+          ingredients={[]}
+          recipes={[]}
+          onRecipesUpdate={handleRecipesUpdate}
+        />
+      )}
+
+      <PreferencesPanel open={showPrefs} onClose={() => setShowPrefs(false)} />
+      <FavoritesPanel open={showFavs} onClose={() => setShowFavs(false)} />
     </div>
   );
 }

@@ -1,22 +1,24 @@
 import base64
 from pathlib import Path
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 from app.config import settings
 
-client = OpenAI(api_key=settings.openai_api_key)
+client = AsyncOpenAI(api_key=settings.openai_api_key)
 
 
 async def analyze_fridge_image(image_path: Path) -> list[str]:
-    image_data = base64.b64encode(image_path.read_bytes()).decode("utf-8")
-    mime_type = "image/jpeg"
-
-    if image_path.suffix.lower() == ".png":
+    suffix = image_path.suffix.lower()
+    if suffix == ".png":
         mime_type = "image/png"
-    elif image_path.suffix.lower() == ".webp":
+    elif suffix == ".webp":
         mime_type = "image/webp"
+    else:
+        mime_type = "image/jpeg"
 
-    response = client.chat.completions.create(
+    image_data = base64.b64encode(image_path.read_bytes()).decode("utf-8")
+
+    response = await client.chat.completions.create(
         model="gpt-4o",
         messages=[
             {
@@ -44,6 +46,4 @@ async def analyze_fridge_image(image_path: Path) -> list[str]:
     )
 
     ingredients_text = response.choices[0].message.content.strip()
-    ingredients = [i.strip() for i in ingredients_text.split(",") if i.strip()]
-
-    return ingredients
+    return [i.strip() for i in ingredients_text.split(",") if i.strip()]
